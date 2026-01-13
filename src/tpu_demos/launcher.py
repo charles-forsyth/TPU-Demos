@@ -166,7 +166,7 @@ class TPULauncher:
             self.project_id,
             "--command",
             'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && '
-            "cd ~/tpu-demos && uv sync",
+            "cd ~/tpu-demos && uv sync && uv pip install -e .",
         ]
         self._run_command(cmd, "Installing dependencies on remote VM")
 
