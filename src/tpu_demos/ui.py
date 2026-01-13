@@ -41,32 +41,26 @@ def make_metrics_table(step: int, loss: float, throughput: float, status: str) -
     table = Table(expand=True, box=None)
     table.add_column("Metric", style="cyan")
     table.add_column("Value", style="magenta", justify="right")
-
     status_style = "green" if status == "RUNNING" else "yellow"
     table.add_row("Status", f"[bold {status_style}]{status}[/]")
     table.add_row("Step", f"{step}")
     table.add_row("Loss", f"{loss:.4f}")
     table.add_row("Throughput", f"{throughput:.1f} img/s")
-
     return table
 
 
 def run_dashboard(num_steps: int = 300) -> None:
     layout = Layout()
-
     layout.split(
         Layout(name="header", size=3),
         Layout(name="body", ratio=1),
         Layout(name="footer", size=3),
     )
-
     layout["body"].split_row(
         Layout(name="left", ratio=1), Layout(name="right", ratio=1)
     )
-
     layout["header"].update(make_header())
     layout["left"].update(make_code_panel())
-
     progress = Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -77,35 +71,23 @@ def run_dashboard(num_steps: int = 300) -> None:
     task_id = progress.add_task("[cyan]Training Progress", total=num_steps)
     layout["footer"].update(Panel(progress, border_style="blue"))
 
-    # Small delay to ensure terminal handles the TTY transition from SSH
-    time.sleep(0.5)
-
     with Live(layout, refresh_per_second=10, screen=True):
         for metrics in training_loop(num_steps=num_steps):
-            step = metrics["step"]
-            loss = metrics["loss"]
-            throughput = metrics["throughput"]
-            status = str(metrics["status"])
-
-            # Update Metrics Panel
-            metrics_panel = Panel(
-                make_metrics_table(step, loss, throughput, status),
-                title="[b]Live Telemetry[/b]",
-                border_style="red",
+            step, loss, tp, status = (
+                metrics["step"],
+                metrics["loss"],
+                metrics["throughput"],
+                str(metrics["status"]),
             )
-            layout["right"].update(metrics_panel)
-
-            # Update Progress
+            layout["right"].update(
+                Panel(
+                    make_metrics_table(step, loss, tp, status),
+                    title="[b]Live Telemetry[/b]",
+                    border_style="red",
+                )
+            )
             progress.update(
-                task_id,
-                completed=step,
-                description=f"[cyan]Training... (Loss: {loss:.3f})",
+                task_id, completed=step, description=f"Training... (Loss: {loss:.3f})"
             )
-
-            # Simulate a slight delay for visual pacing if it's too fast on CPU
-            if throughput > 1000:
+            if tp > 1000:
                 time.sleep(0.01)
-
-
-if __name__ == "__main__":
-    run_dashboard()
