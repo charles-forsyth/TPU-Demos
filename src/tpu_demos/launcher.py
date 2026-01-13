@@ -138,8 +138,9 @@ class TPULauncher:
         console.log("[bold cyan]Mission Step 4: Launching Background Worker[/]")
         cmd_str = (
             "export PYTHONPATH=$HOME/tpu-demos/src && "
+            "cd ~/tpu-demos && "
             "nohup python3 -m tpu_demos.biology.medical_imaging "
-            "> ~/tpu-demos/worker.log 2>&1 &"
+            "> worker.log 2>&1 &"
         )
         launch_cmd = [
             "gcloud",
