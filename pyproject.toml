@@ -1,6 +1,6 @@
 [project]
 name = "tpu-demos"
-version = "0.1.1"
+version = "0.1.2"
 description = "Research Computing TPU Demos for various science disciplines"
 readme = "README.md"
 authors = [
@@ -12,10 +12,11 @@ dependencies = [
     "flax",
     "optax",
     "numpy",
+    "rich",
 ]
 
 [project.scripts]
-tpu-demos = "tpu_demos:main"
+tpu-demos = "tpu_demos.cli:main"
 
 [tool.uv]
 extra-index-url = ["https://storage.googleapis.com/jax-releases/libtpu_releases.html"]
