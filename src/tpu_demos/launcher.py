@@ -157,6 +157,36 @@ class TPULauncher:
         ]
         self._run(launch_cmd, "Starting TPU workload")
 
+    def inspect_logs(self) -> None:
+        """Fetches and displays the worker log from the remote VM."""
+        console.log("[bold yellow]Fetching worker logs for debugging...[/]")
+        try:
+            log_cmd = [
+                "gcloud",
+                "compute",
+                "tpus",
+                "tpu-vm",
+                "ssh",
+                self.vm_name,
+                "--zone",
+                self.zone,
+                "--project",
+                self.project_id,
+                "--command",
+                "cat ~/tpu-demos/worker.log",
+            ]
+            logs = subprocess.run(
+                log_cmd, capture_output=True, text=True, check=False
+            ).stdout
+            if logs:
+                console.print(
+                    Panel(logs, title="Remote Worker Log", border_style="red")
+                )
+            else:
+                console.print("[red]No logs found in ~/tpu-demos/worker.log[/]")
+        except Exception as e:
+            console.print(f"[red]Failed to fetch logs: {e}[/]")
+
     def poll_and_render(self, num_steps: int = 300) -> None:
         console.log("[bold cyan]Mission Step 5: Real-time Telemetry Active[/]")
         layout = Layout()
@@ -181,6 +211,7 @@ class TPULauncher:
         task_id = progress.add_task("[cyan]TPU Training", total=num_steps)
         layout["footer"].update(Panel(progress, border_style="blue"))
 
+        received_data = False
         with Live(layout, refresh_per_second=4, screen=True):
             for _ in range(num_steps * 5):  # Poll up to 5x expected time
                 try:
@@ -198,32 +229,43 @@ class TPULauncher:
                         "--command",
                         "cat ~/tpu-demos/metrics.json",
                     ]
-                    raw = subprocess.run(cat_cmd, capture_output=True, text=True).stdout
+                    # Don't check=True here so we handle empty/missing file gracefully
+                    res = subprocess.run(cat_cmd, capture_output=True, text=True)
+                    raw = res.stdout
                     if raw:
-                        m = json.loads(raw)
-                        step, loss, tp, status = (
-                            m["step"],
-                            m["loss"],
-                            m["throughput"],
-                            m["status"],
-                        )
-                        layout["right"].update(
-                            Panel(
-                                make_metrics_table(step, loss, tp, status),
-                                title="Live TPU Telemetry",
-                                border_style="red",
+                        try:
+                            m = json.loads(raw)
+                            received_data = True
+                            step, loss, tp, status = (
+                                m["step"],
+                                m["loss"],
+                                m["throughput"],
+                                m["status"],
                             )
-                        )
-                        progress.update(
-                            task_id,
-                            completed=step,
-                            description=f"Training... (Loss: {loss:.3f})",
-                        )
-                        if step >= num_steps:
-                            break
+                            layout["right"].update(
+                                Panel(
+                                    make_metrics_table(step, loss, tp, status),
+                                    title="Live TPU Telemetry",
+                                    border_style="red",
+                                )
+                            )
+                            progress.update(
+                                task_id,
+                                completed=step,
+                                description=f"Training... (Loss: {loss:.3f})",
+                            )
+                            if step >= num_steps:
+                                break
+                        except json.JSONDecodeError:
+                            pass  # File might be partially written
                 except Exception:
                     pass
                 time.sleep(1)
+
+        if not received_data:
+            console.print("[bold red]❌ No telemetry received![/]")
+            # We raise an error here so the main loop catches it and we can inspect logs
+            raise RuntimeError("Worker failed to produce metrics.")
 
     def cleanup(self) -> None:
         delete_cmd = [
@@ -254,8 +296,9 @@ def launch_mission(project_id: str) -> None:
         console.print("\n[yellow]Mission aborted by pilot.[/]")
     except Exception as e:
         console.print(f"\n[bold red]CRITICAL FAILURE:[/] {e}")
-        # Re-raise to see full traceback if needed
-        raise e
+        # Fetch logs if we failed
+        launcher.inspect_logs()
+        # Re-raise to ensure non-zero exit code if needed, or just let cleanup happen
     finally:
         console.print(Panel("Initiating Re-entry Protocol...", style="white on red"))
         launcher.cleanup()
