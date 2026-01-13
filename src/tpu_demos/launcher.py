@@ -36,6 +36,7 @@ class TPULauncher:
                 console.log(f"[bold red]✗ {description} failed![/bold red]")
                 if suppress_output:
                     console.print(f"[red]Error:[/red] {e.stderr}")
+                    console.print(f"[red]Output:[/red] {e.stdout}")
                 raise e
 
     def check_gcloud(self) -> None:
@@ -60,7 +61,6 @@ class TPULauncher:
             result = subprocess.run(cmd, check=True, capture_output=True, text=True)
             tpus = json.loads(result.stdout)
             for tpu in tpus:
-                # The name in the list might be the full path or just the name
                 if tpu.get("name") == self.vm_name or tpu.get("name", "").endswith(
                     f"/{self.vm_name}"
                 ):
@@ -72,9 +72,7 @@ class TPULauncher:
     def create_vm(self) -> None:
         """Creates the TPU VM if it doesn't exist."""
         if self.vm_exists():
-            console.print(
-                f"[bold yellow]⚠️ VM '{self.vm_name}' detected. Reusing.[/bold yellow]"
-            )
+            console.print(f"[bold yellow]⚠️ VM '{self.vm_name}' detected. Reusing.[/]")
             return
 
         cmd = [
@@ -155,8 +153,6 @@ class TPULauncher:
 
     def install_dependencies(self) -> None:
         """Installs dependencies on the VM."""
-        # We explicitly set PATH to include typical install locations for uv
-        # because non-interactive SSH shells might not load .bashrc
         cmd = [
             "gcloud",
             "compute",
@@ -183,6 +179,26 @@ class TPULauncher:
             )
         )
 
+        # Force a check of TPU devices first to debug
+        check_tpu_cmd = [
+            "gcloud",
+            "compute",
+            "tpus",
+            "tpu-vm",
+            "ssh",
+            self.vm_name,
+            "--zone",
+            self.zone,
+            "--project",
+            self.project_id,
+            "--command",
+            'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && '
+            'python3 -c "import jax; print(f"TPU Devices: {jax.devices()}")"',
+        ]
+        self._run_command(
+            check_tpu_cmd, "Verifying TPU hardware access", suppress_output=False
+        )
+
         cmd = [
             "gcloud",
             "compute",
@@ -195,16 +211,15 @@ class TPULauncher:
             "--project",
             self.project_id,
             "--command",
-            f'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && '
+            'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && '
             f"cd ~/tpu-demos && uv run tpu-demos {demo_name}",
-            "--ssh-flag=-t",  # Force TTY for Rich colors
+            "--ssh-flag=-t",
         ]
 
         try:
-            # We want to see the output live, so capture_output=False (default)
             subprocess.run(cmd, check=True)
-        except subprocess.CalledProcessError:
-            console.log("[red]Demo execution failed or interrupted.[/red]")
+        except subprocess.CalledProcessError as e:
+            console.log(f"[red]Demo failed with exit code {e.returncode}[/red]")
 
 
 def launch_mission(project_id: str, demo: str = "biology") -> None:
@@ -214,15 +229,8 @@ def launch_mission(project_id: str, demo: str = "biology") -> None:
         console.print(
             Panel("[bold]🛑 Mission Control Initiated[/bold]", style="red on white")
         )
-
-        # 1. Check Prereqs
         launcher.check_gcloud()
-
-        # 2. Provision (Smart Reuse)
         launcher.create_vm()
-
-        # 3. Setup
-        # Create remote dir first
         launcher._run_command(
             [
                 "gcloud",
@@ -242,8 +250,6 @@ def launch_mission(project_id: str, demo: str = "biology") -> None:
         )
         launcher.deploy_code()
         launcher.install_dependencies()
-
-        # 4. Execute
         launcher.run_demo(demo)
 
     except KeyboardInterrupt:
@@ -253,7 +259,6 @@ def launch_mission(project_id: str, demo: str = "biology") -> None:
     except Exception as e:
         console.print(f"\n[bold red]🔥 Mission Failed:[/bold red] {e}")
     finally:
-        # 5. Cleanup
         console.print(
             Panel(
                 "[bold]🧹 Re-entry... Resources will be incinerated.[/bold]",
