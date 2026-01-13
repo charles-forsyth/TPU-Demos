@@ -1,17 +1,18 @@
 import json
 import time
 from functools import partial
-from typing import Any, Callable, Iterator, Mapping
+from typing import Any, Callable, Mapping
 
 import jax
 import jax.numpy as jnp
 import optax
 from flax import linen as nn
+from rich.console import Console
+
+console = Console()
 
 
 class ResNetBlock(nn.Module):
-    """Simple ResNet Block."""
-
     filters: int
     conv: Callable[..., Any]
     norm: Callable[..., Any]
@@ -35,8 +36,6 @@ class ResNetBlock(nn.Module):
 
 
 class ResNet50(nn.Module):
-    """Simplified ResNet-50 for TPU demonstration."""
-
     num_classes: int = 1000
 
     @nn.compact
@@ -49,7 +48,6 @@ class ResNet50(nn.Module):
         x = nn.relu(x)
         x = nn.max_pool(x, (3, 3), strides=(2, 2), padding="SAME")  # type: ignore
 
-        # Simplified stages for demonstration
         for filters, blocks in zip([64, 128, 256, 512], [3, 4, 6, 3]):
             for i in range(blocks):
                 strides = (2, 2) if i == 0 and filters != 64 else (1, 1)
@@ -65,7 +63,6 @@ class ResNet50(nn.Module):
 def create_train_state(
     rng: jax.Array, learning_rate: float, momentum: float
 ) -> tuple[Any, Any, optax.GradientTransformation, nn.Module]:
-    """Initializes training state."""
     model = ResNet50()
     variables = model.init(rng, jnp.ones([1, 224, 224, 3]), train=False)
     params = variables["params"]
@@ -83,8 +80,6 @@ def train_step(
     tx: optax.GradientTransformation,
     model: nn.Module,
 ) -> tuple[Any, Any, optax.OptState, jnp.ndarray]:
-    """A single training step compiled with XLA."""
-
     def loss_fn(params: Any, batch_stats: Any) -> tuple[jnp.ndarray, Any]:
         logits, new_model_state = model.apply(
             {"params": params, "batch_stats": batch_stats},
@@ -104,50 +99,62 @@ def train_step(
     return params, new_model_state["batch_stats"], opt_state, loss
 
 
-def training_loop(
-    num_steps: int = 100, batch_size: int = 128
-) -> Iterator[dict[str, Any]]:
-    """Runs the training loop and yields metrics."""
+def main() -> None:
+    console.print("[bold cyan]Initializing TPU Job...[/]")
+    try:
+        console.log(f"JAX Devices: {jax.devices()}")
+    except Exception:
+        console.log("[yellow]Could not detect TPU devices. Using CPU fallback?[/]")
+
     rng = jax.random.PRNGKey(0)
     params, batch_stats, tx, model = create_train_state(rng, 0.1, 0.9)
     opt_state = tx.init(params)
+
+    batch_size = 128
     batch = {
         "image": jnp.ones((batch_size, 224, 224, 3), dtype=jnp.bfloat16),
         "label": jnp.zeros((batch_size,), dtype=jnp.int32),
     }
 
-    yield {"step": 0, "loss": 0.0, "throughput": 0.0, "status": "COMPILING"}
+    console.log("Compiling training step...")
+    start_compile = time.time()
     params, batch_stats, opt_state, loss = train_step(
         params, batch_stats, opt_state, batch, tx, model
     )
     jax.block_until_ready(loss)  # type: ignore
-    yield {"step": 1, "loss": float(loss), "throughput": 0.0, "status": "RUNNING"}
+    console.log(f"Compilation finished in {time.time() - start_compile:.2f}s")
 
-    for step in range(2, num_steps + 1):
-        step_start = time.time()
+    console.log("Starting training loop (300 steps)...")
+    start_time = time.time()
+
+    final_loss = 0.0
+    for step in range(1, 301):
         params, batch_stats, opt_state, loss = train_step(
             params, batch_stats, opt_state, batch, tx, model
         )
-        jax.block_until_ready(loss)  # type: ignore
-        step_end = time.time()
-        throughput = batch_size / (step_end - step_start)
-        yield {
-            "step": step,
-            "loss": float(loss),
-            "throughput": throughput,
-            "status": "RUNNING",
-        }
+        # Log every 50 steps
+        if step % 50 == 0:
+            jax.block_until_ready(loss)  # type: ignore
+            console.log(f"Step {step}: Loss = {loss:.4f}")
+            final_loss = float(loss)
 
+    total_time = time.time() - start_time
+    avg_throughput = (300 * batch_size) / total_time
 
-def run_headless(num_steps: int = 300, output_file: str = "metrics.json") -> None:
-    """Runs training and writes latest metrics to a JSON file for polling."""
-    for metrics in training_loop(num_steps=num_steps):
-        with open(output_file, "w") as f:
-            json.dump(metrics, f)
-        # Add a tiny sleep to not hammer the disk too hard
-        if metrics["step"] > 1:
-            time.sleep(0.01)
+    console.print(
+        f"[bold green]Job Complete![/] Average Throughput: {avg_throughput:.2f} img/s"
+    )
+
+    # Save results
+    results = {
+        "final_loss": final_loss,
+        "avg_throughput": avg_throughput,
+        "total_time": total_time,
+        "status": "SUCCESS",
+    }
+    with open("results.json", "w") as f:
+        json.dump(results, f)
 
 
 if __name__ == "__main__":
-    run_headless()
+    main()
