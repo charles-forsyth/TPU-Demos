@@ -155,7 +155,8 @@ class TPULauncher:
 
     def install_dependencies(self) -> None:
         """Installs dependencies on the VM."""
-        # Using uv to install the project
+        # We explicitly set PATH to include typical install locations for uv
+        # because non-interactive SSH shells might not load .bashrc
         cmd = [
             "gcloud",
             "compute",
@@ -168,7 +169,8 @@ class TPULauncher:
             "--project",
             self.project_id,
             "--command",
-            "cd ~/tpu-demos && ~/.cargo/bin/uv sync",
+            'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && '
+            "cd ~/tpu-demos && uv sync",
         ]
         self._run_command(cmd, "Installing dependencies on remote VM")
 
@@ -193,7 +195,8 @@ class TPULauncher:
             "--project",
             self.project_id,
             "--command",
-            f"cd ~/tpu-demos && ~/.cargo/bin/uv run tpu-demos {demo_name}",
+            f'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && '
+            f"cd ~/tpu-demos && uv run tpu-demos {demo_name}",
             "--ssh-flag=-t",  # Force TTY for Rich colors
         ]
 
