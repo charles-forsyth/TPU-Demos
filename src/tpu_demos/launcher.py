@@ -179,7 +179,6 @@ class TPULauncher:
             )
         )
 
-        # Force a check of TPU devices first to debug
         check_tpu_cmd = [
             "gcloud",
             "compute",
@@ -193,7 +192,7 @@ class TPULauncher:
             self.project_id,
             "--command",
             'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && '
-            'python3 -c "import jax; print(f"TPU Devices: {jax.devices()}")"',
+            "python3 -c 'import jax; print(jax.devices())'",
         ]
         self._run_command(
             check_tpu_cmd, "Verifying TPU hardware access", suppress_output=False
