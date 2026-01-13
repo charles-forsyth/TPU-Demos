@@ -210,9 +210,9 @@ class TPULauncher:
             "--project",
             self.project_id,
             "--command",
-            'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && '
+            f'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && '
             f"cd ~/tpu-demos && uv run tpu-demos {demo_name}",
-            "--ssh-flag=-t",
+            "--ssh-flag=-tt",
         ]
 
         try:
