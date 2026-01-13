@@ -136,6 +136,25 @@ class TPULauncher:
 
     def launch_worker(self) -> None:
         console.log("[bold cyan]Mission Step 4: Launching Background Worker[/]")
+        # Cleanup old artifacts
+        self._run(
+            [
+                "gcloud",
+                "compute",
+                "tpus",
+                "tpu-vm",
+                "ssh",
+                self.vm_name,
+                "--zone",
+                self.zone,
+                "--project",
+                self.project_id,
+                "--command",
+                "rm -f ~/tpu-demos/metrics.json ~/tpu-demos/worker.log",
+            ],
+            "Cleaning up previous run artifacts",
+        )
+
         cmd_str = (
             "export PYTHONPATH=$HOME/tpu-demos/src && "
             "cd ~/tpu-demos && "
