@@ -1,4 +1,5 @@
-from typing import Any, Callable, Mapping
+import time
+from typing import Any, Callable, Iterator, Mapping
 
 import jax
 import jax.numpy as jnp
@@ -61,58 +62,101 @@ class ResNet50(nn.Module):
 
 def create_train_state(
     rng: jax.Array, learning_rate: float, momentum: float
-) -> tuple[Any, optax.GradientTransformation, nn.Module]:
+) -> tuple[Any, Any, optax.GradientTransformation, nn.Module]:
     """Initializes training state."""
     model = ResNet50()
     variables = model.init(rng, jnp.ones([1, 224, 224, 3]), train=False)
     params = variables["params"]
+    batch_stats = variables["batch_stats"]
     tx = optax.sgd(learning_rate, momentum)
-    return params, tx, model
+    return params, batch_stats, tx, model
 
 
-@jax.jit
+@jax.jit(static_argnames=["tx", "model"])
 def train_step(
     params: Any,
+    batch_stats: Any,
     opt_state: optax.OptState,
     batch: Mapping[str, jnp.ndarray],
     tx: optax.GradientTransformation,
     model: nn.Module,
-) -> tuple[Any, optax.OptState, jnp.ndarray]:
+) -> tuple[Any, Any, optax.OptState, jnp.ndarray]:
     """A single training step compiled with XLA."""
 
-    def loss_fn(params: Any) -> jnp.ndarray:
-        logits = model.apply({"params": params}, batch["image"], train=True)
+    def loss_fn(params: Any, batch_stats: Any) -> tuple[jnp.ndarray, Any]:
+        logits, new_model_state = model.apply(
+            {"params": params, "batch_stats": batch_stats},
+            batch["image"],
+            train=True,
+            mutable=["batch_stats"],
+        )
         loss: jnp.ndarray = optax.softmax_cross_entropy_with_integer_labels(
             logits=logits, labels=batch["label"]
         ).mean()
-        return loss
+        return loss, new_model_state
 
-    grad_fn = jax.value_and_grad(loss_fn)
-    loss, grads = grad_fn(params)
+    grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
+    (loss, new_model_state), grads = grad_fn(params, batch_stats)
     updates, opt_state = tx.update(grads, opt_state)
     params = optax.apply_updates(params, updates)
-    return params, opt_state, loss
+    return params, new_model_state["batch_stats"], opt_state, loss
 
 
-def main() -> None:
-    print("TPU Medical Imaging Demo: ResNet-50")
-    print(f"TPU Devices: {jax.devices()}")
-
+def training_loop(
+    num_steps: int = 100, batch_size: int = 128
+) -> Iterator[dict[str, Any]]:
+    """
+    Runs the training loop and yields metrics for the dashboard.
+    """
     # Initialize state
     rng = jax.random.PRNGKey(0)
-    params, tx, model = create_train_state(rng, 0.1, 0.9)
+    params, batch_stats, tx, model = create_train_state(rng, 0.1, 0.9)
     opt_state = tx.init(params)
 
-    # Dummy data
+    # Dummy data (static batch for demo speed)
     batch = {
-        "image": jnp.ones((8, 224, 224, 3), dtype=jnp.bfloat16),
-        "label": jnp.zeros((8,), dtype=jnp.int32),
+        "image": jnp.ones((batch_size, 224, 224, 3), dtype=jnp.bfloat16),
+        "label": jnp.zeros((batch_size,), dtype=jnp.int32),
     }
 
-    # Train
-    params, opt_state, loss = train_step(params, opt_state, batch, tx, model)
-    print(f"Initial loss: {loss}")
+    # Compilation Step (Warmup)
+    yield {"step": 0, "loss": 0.0, "throughput": 0.0, "status": "COMPILING"}
+    start_compile = time.time()
+    params, batch_stats, opt_state, loss = train_step(
+        params, batch_stats, opt_state, batch, tx, model
+    )
+    jax.block_until_ready(loss)  # type: ignore[no-untyped-call]
+    end_compile = time.time()
+    compile_time = end_compile - start_compile
+    yield {
+        "step": 1,
+        "loss": float(loss),
+        "throughput": 0.0,
+        "status": "RUNNING",
+        "compile_time": compile_time,
+    }
+
+    # Training Loop
+    for step in range(2, num_steps + 1):
+        step_start = time.time()
+        params, batch_stats, opt_state, loss = train_step(
+            params, batch_stats, opt_state, batch, tx, model
+        )
+        jax.block_until_ready(loss)  # type: ignore[no-untyped-call]
+        step_end = time.time()
+
+        # Calculate instant throughput
+        throughput = batch_size / (step_end - step_start)
+
+        yield {
+            "step": step,
+            "loss": float(loss),
+            "throughput": throughput,
+            "status": "RUNNING",
+        }
 
 
 if __name__ == "__main__":
-    main()
+    # Simple CLI test
+    for metrics in training_loop(10):
+        print(metrics)
