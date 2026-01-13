@@ -1,0 +1,43 @@
+[project]
+name = "tpu-demos"
+version = "0.1.1"
+description = "Research Computing TPU Demos for various science disciplines"
+readme = "README.md"
+authors = [
+    { name = "Chuck Forsyth", email = "forsythc@ucr.edu" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "jax[tpu]",
+    "flax",
+    "optax",
+    "numpy",
+]
+
+[project.scripts]
+tpu-demos = "tpu_demos:main"
+
+[tool.uv]
+extra-index-url = ["https://storage.googleapis.com/jax-releases/libtpu_releases.html"]
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest",
+]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+ignore_missing_imports = true
+
+[build-system]
+requires = ["uv_build>=0.9.10,<0.10.0"]
+build-backend = "uv_build"
