@@ -1,6 +1,6 @@
 [project]
 name = "tpu-demos"
-version = "0.2.0"
+version = "0.2.1"
 description = "Simple, robust TPU batch job runner for scientific workloads"
 readme = "README.md"
 authors = [
@@ -12,7 +12,7 @@ dependencies = [
     "flax",
     "optax",
     "numpy",
-    "rich",  # We'll keep rich for nice simple logs, but not dashboards
+    "rich",
 ]
 
 [project.scripts]
