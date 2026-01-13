@@ -3,9 +3,7 @@ import os
 import subprocess
 import sys
 
-from tpu_demos.biology.medical_imaging import run_headless
 from tpu_demos.launcher import launch_mission
-from tpu_demos.ui import run_dashboard
 
 
 def get_gcloud_project() -> str | None:
@@ -28,11 +26,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="TPU Demos CLI")
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
-    # Biology Dashboard
-    subparsers.add_parser("biology", help="Run local Biology demo dashboard")
-
-    # Worker (Remote)
-    subparsers.add_parser("worker", help="Run headless worker (internal use)")
+    # Biology Dashboard (Local Test)
+    subparsers.add_parser("biology", help="Run local Biology demo")
 
     # Launch (Mission Control)
     launch_parser = subparsers.add_parser("launch", help="Launch TPU mission")
@@ -47,9 +42,10 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "biology":
-        run_dashboard()
-    elif args.command == "worker":
-        run_headless()
+        # Import dynamically to avoid overhead if not used
+        from tpu_demos.biology.medical_imaging import main as bio_main
+
+        bio_main()
     elif args.command == "launch":
         # Resolution order: Argument -> --project flag -> Env Var -> gcloud config
         project_id = (

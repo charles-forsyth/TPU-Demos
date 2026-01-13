@@ -1,7 +1,7 @@
 [project]
 name = "tpu-demos"
-version = "0.1.19"
-description = "Research Computing TPU Demos for various science disciplines"
+version = "0.2.0"
+description = "Simple, robust TPU batch job runner for scientific workloads"
 readme = "README.md"
 authors = [
     { name = "Chuck Forsyth", email = "forsythc@ucr.edu" }
@@ -12,7 +12,7 @@ dependencies = [
     "flax",
     "optax",
     "numpy",
-    "rich",
+    "rich",  # We'll keep rich for nice simple logs, but not dashboards
 ]
 
 [project.scripts]
