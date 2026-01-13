@@ -1,3 +1,4 @@
+import json
 import subprocess
 
 from rich.console import Console
@@ -21,24 +22,61 @@ class TPULauncher:
         self.accelerator_type = accelerator_type
         self.version = version
 
-    def _run_command(self, cmd: list[str], description: str) -> None:
+    def _run_command(
+        self, cmd: list[str], description: str, suppress_output: bool = True
+    ) -> None:
         """Runs a shell command and streams output to the console."""
         with console.status(f"[bold green]{description}...") as _:
             try:
-                subprocess.run(cmd, check=True, capture_output=True, text=True)
+                subprocess.run(
+                    cmd, check=True, capture_output=suppress_output, text=True
+                )
                 console.log(f"[green]✓ {description} complete.[/green]")
-                # console.log(result.stdout) # Verbose logging if needed
             except subprocess.CalledProcessError as e:
                 console.log(f"[bold red]✗ {description} failed![/bold red]")
-                console.print(f"[red]Error:[/red] {e.stderr}")
+                if suppress_output:
+                    console.print(f"[red]Error:[/red] {e.stderr}")
                 raise e
 
     def check_gcloud(self) -> None:
         """Verifies gcloud is installed and authenticated."""
         self._run_command(["gcloud", "--version"], "Checking gcloud installation")
 
+    def vm_exists(self) -> bool:
+        """Checks if the TPU VM already exists."""
+        cmd = [
+            "gcloud",
+            "compute",
+            "tpus",
+            "tpu-vm",
+            "list",
+            "--zone",
+            self.zone,
+            "--project",
+            self.project_id,
+            "--format=json",
+        ]
+        try:
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            tpus = json.loads(result.stdout)
+            for tpu in tpus:
+                # The name in the list might be the full path or just the name
+                if tpu.get("name") == self.vm_name or tpu.get("name", "").endswith(
+                    f"/{self.vm_name}"
+                ):
+                    return True
+            return False
+        except (subprocess.CalledProcessError, json.JSONDecodeError):
+            return False
+
     def create_vm(self) -> None:
-        """Creates the TPU VM."""
+        """Creates the TPU VM if it doesn't exist."""
+        if self.vm_exists():
+            console.print(
+                f"[bold yellow]⚠️ VM '{self.vm_name}' detected. Reusing.[/bold yellow]"
+            )
+            return
+
         cmd = [
             "gcloud",
             "compute",
@@ -143,8 +181,6 @@ class TPULauncher:
             )
         )
 
-        # We want to see the output live, so we use subprocess.Popen
-        # or run without capture_output
         cmd = [
             "gcloud",
             "compute",
@@ -162,6 +198,7 @@ class TPULauncher:
         ]
 
         try:
+            # We want to see the output live, so capture_output=False (default)
             subprocess.run(cmd, check=True)
         except subprocess.CalledProcessError:
             console.log("[red]Demo execution failed or interrupted.[/red]")
@@ -178,7 +215,7 @@ def launch_mission(project_id: str, demo: str = "biology") -> None:
         # 1. Check Prereqs
         launcher.check_gcloud()
 
-        # 2. Provision
+        # 2. Provision (Smart Reuse)
         launcher.create_vm()
 
         # 3. Setup
