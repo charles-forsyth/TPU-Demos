@@ -1,4 +1,5 @@
 import time
+from functools import partial
 from typing import Any, Callable, Iterator, Mapping
 
 import jax
@@ -72,7 +73,7 @@ def create_train_state(
     return params, batch_stats, tx, model
 
 
-@jax.jit(static_argnames=["tx", "model"])
+@partial(jax.jit, static_argnames=["tx", "model"])
 def train_step(
     params: Any,
     batch_stats: Any,
