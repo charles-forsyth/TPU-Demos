@@ -22,12 +22,21 @@ class TPULauncher:
         self.vm_name = vm_name
 
     def _run(self, cmd: list[str], desc: str, quiet: bool = True) -> str:
+        cmd_joined = " ".join(cmd)
+        console.log(f"[blue]Executing: {cmd_joined}[/]")
         with console.status(f"[bold green]{desc}...") as _:
-            res = subprocess.run(cmd, capture_output=quiet, text=True, check=True)
-            return res.stdout
+            try:
+                res = subprocess.run(cmd, capture_output=quiet, text=True, check=True)
+                console.log(f"[green]✓ {desc} complete.[/green]")
+                return res.stdout
+            except subprocess.CalledProcessError as e:
+                console.log(f"[bold red]✗ {desc} failed![/bold red]")
+                if quiet:
+                    console.print(f"[red]Error:[/red] {e.stderr}")
+                raise e
 
     def create_vm(self) -> None:
-        # Simple create-if-not-exists
+        console.log("[bold cyan]Mission Step 1: Resource Provisioning[/]")
         check_cmd = [
             "gcloud",
             "compute",
@@ -40,11 +49,14 @@ class TPULauncher:
             self.project_id,
             "--format=json",
         ]
-        raw = subprocess.run(check_cmd, capture_output=True, text=True).stdout
-        tpus = json.loads(raw)
-        if any(t.get("name", "").endswith(self.vm_name) for t in tpus):
-            console.log(f"[yellow]Reusing {self.vm_name}[/]")
-            return
+        try:
+            raw = subprocess.run(check_cmd, capture_output=True, text=True).stdout
+            tpus = json.loads(raw) if raw else []
+            if any(t.get("name", "").endswith(self.vm_name) for t in tpus):
+                console.log(f"[yellow]Reusing existing VM: {self.vm_name}[/]")
+                return
+        except Exception as e:
+            console.log(f"[yellow]Could not list VMs, attempting creation: {e}[/]")
 
         create_cmd = [
             "gcloud",
@@ -63,44 +75,48 @@ class TPULauncher:
             self.project_id,
             "--quiet",
         ]
-        self._run(create_cmd, "Provisioning TPU")
+        self._run(create_cmd, "Provisioning TPU VM")
 
     def setup_remote(self) -> None:
-        # 1. Upload code
-        prep_cmd = [
-            "gcloud",
-            "compute",
-            "tpus",
-            "tpu-vm",
-            "ssh",
-            self.vm_name,
-            "--zone",
-            self.zone,
-            "--project",
-            self.project_id,
-            "--command",
-            "mkdir -p ~/tpu-demos",
-        ]
-        self._run(prep_cmd, "Prep remote")
-
-        for f in ["src", "pyproject.toml"]:
-            scp_cmd = [
+        console.log("[bold cyan]Mission Step 2: Code Deployment[/]")
+        self._run(
+            [
                 "gcloud",
                 "compute",
                 "tpus",
                 "tpu-vm",
-                "scp",
-                "--recurse",
-                f,
-                f"{self.vm_name}:~/tpu-demos/",
+                "ssh",
+                self.vm_name,
                 "--zone",
                 self.zone,
                 "--project",
                 self.project_id,
-            ]
-            self._run(scp_cmd, f"Upload {f}")
+                "--command",
+                "mkdir -p ~/tpu-demos",
+            ],
+            "Preparing remote directory",
+        )
 
-        # 2. Install deps via pip directly
+        for f in ["src", "pyproject.toml"]:
+            self._run(
+                [
+                    "gcloud",
+                    "compute",
+                    "tpus",
+                    "tpu-vm",
+                    "scp",
+                    "--recurse",
+                    f,
+                    f"{self.vm_name}:~/tpu-demos/",
+                    "--zone",
+                    self.zone,
+                    "--project",
+                    self.project_id,
+                ],
+                f"Upload {f}",
+            )
+
+        console.log("[bold cyan]Mission Step 3: Dependency Installation[/]")
         pkg_url = "https://storage.googleapis.com/jax-releases/libtpu_releases.html"
         install_cmd = [
             "gcloud",
@@ -116,10 +132,10 @@ class TPULauncher:
             "--command",
             f"pip install 'jax[tpu]' -f {pkg_url} flax optax",
         ]
-        self._run(install_cmd, "Install deps")
+        self._run(install_cmd, "Installing dependencies via pip")
 
     def launch_worker(self) -> None:
-        # Start the worker in the background
+        console.log("[bold cyan]Mission Step 4: Launching Background Worker[/]")
         cmd_str = (
             "export PYTHONPATH=$HOME/tpu-demos/src && "
             "nohup python3 -m tpu_demos.biology.medical_imaging "
@@ -139,9 +155,10 @@ class TPULauncher:
             "--command",
             cmd_str,
         ]
-        self._run(launch_cmd, "Launch worker")
+        self._run(launch_cmd, "Starting TPU workload")
 
     def poll_and_render(self, num_steps: int = 300) -> None:
+        console.log("[bold cyan]Mission Step 5: Real-time Telemetry Active[/]")
         layout = Layout()
         layout.split(
             Layout(name="header", size=3),
@@ -165,7 +182,7 @@ class TPULauncher:
         layout["footer"].update(Panel(progress, border_style="blue"))
 
         with Live(layout, refresh_per_second=4, screen=True):
-            for _ in range(num_steps * 2):  # Poll up to 2x expected time
+            for _ in range(num_steps * 5):  # Poll up to 5x expected time
                 try:
                     cat_cmd = [
                         "gcloud",
@@ -222,18 +239,24 @@ class TPULauncher:
             self.project_id,
             "--quiet",
         ]
-        self._run(delete_cmd, "Cleanup")
+        self._run(delete_cmd, "Incinerating resources")
 
 
 def launch_mission(project_id: str) -> None:
     launcher = TPULauncher(project_id)
     try:
+        console.print(Panel("[bold white]🛑 MISSION START[/]", style="red on blue"))
         launcher.create_vm()
         launcher.setup_remote()
         launcher.launch_worker()
         launcher.poll_and_render()
     except KeyboardInterrupt:
-        console.print("\n[yellow]Aborted.[/]")
+        console.print("\n[yellow]Mission aborted by pilot.[/]")
+    except Exception as e:
+        console.print(f"\n[bold red]CRITICAL FAILURE:[/] {e}")
+        # Re-raise to see full traceback if needed
+        raise e
     finally:
-        console.print(Panel("Destruction sequence initiated...", style="white on red"))
+        console.print(Panel("Initiating Re-entry Protocol...", style="white on red"))
         launcher.cleanup()
+        console.print("[bold green]✔ Splashdown confirmed.[/]")
