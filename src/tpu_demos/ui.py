@@ -77,6 +77,9 @@ def run_dashboard(num_steps: int = 300) -> None:
     task_id = progress.add_task("[cyan]Training Progress", total=num_steps)
     layout["footer"].update(Panel(progress, border_style="blue"))
 
+    # Small delay to ensure terminal handles the TTY transition from SSH
+    time.sleep(0.5)
+
     with Live(layout, refresh_per_second=10, screen=True):
         for metrics in training_loop(num_steps=num_steps):
             step = metrics["step"]
