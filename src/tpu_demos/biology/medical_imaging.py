@@ -1,3 +1,4 @@
+import json
 import time
 from functools import partial
 from typing import Any, Callable, Iterator, Mapping
@@ -46,7 +47,7 @@ class ResNet50(nn.Module):
         x = conv(64, (7, 7), (2, 2), padding=[(3, 3), (3, 3)])(x)
         x = norm(use_running_average=not train)(x)
         x = nn.relu(x)
-        x = nn.max_pool(x, (3, 3), strides=(2, 2), padding="SAME")  # type: ignore[no-untyped-call]
+        x = nn.max_pool(x, (3, 3), strides=(2, 2), padding="SAME")  # type: ignore
 
         # Simplified stages for demonstration
         for filters, blocks in zip([64, 128, 256, 512], [3, 4, 6, 3]):
@@ -106,49 +107,30 @@ def train_step(
 def training_loop(
     num_steps: int = 100, batch_size: int = 128
 ) -> Iterator[dict[str, Any]]:
-    """
-    Runs the training loop and yields metrics for the dashboard.
-    """
-    # Initialize state
+    """Runs the training loop and yields metrics."""
     rng = jax.random.PRNGKey(0)
     params, batch_stats, tx, model = create_train_state(rng, 0.1, 0.9)
     opt_state = tx.init(params)
-
-    # Dummy data (static batch for demo speed)
     batch = {
         "image": jnp.ones((batch_size, 224, 224, 3), dtype=jnp.bfloat16),
         "label": jnp.zeros((batch_size,), dtype=jnp.int32),
     }
 
-    # Compilation Step (Warmup)
     yield {"step": 0, "loss": 0.0, "throughput": 0.0, "status": "COMPILING"}
-    start_compile = time.time()
     params, batch_stats, opt_state, loss = train_step(
         params, batch_stats, opt_state, batch, tx, model
     )
-    jax.block_until_ready(loss)  # type: ignore[no-untyped-call]
-    end_compile = time.time()
-    compile_time = end_compile - start_compile
-    yield {
-        "step": 1,
-        "loss": float(loss),
-        "throughput": 0.0,
-        "status": "RUNNING",
-        "compile_time": compile_time,
-    }
+    jax.block_until_ready(loss)  # type: ignore
+    yield {"step": 1, "loss": float(loss), "throughput": 0.0, "status": "RUNNING"}
 
-    # Training Loop
     for step in range(2, num_steps + 1):
         step_start = time.time()
         params, batch_stats, opt_state, loss = train_step(
             params, batch_stats, opt_state, batch, tx, model
         )
-        jax.block_until_ready(loss)  # type: ignore[no-untyped-call]
+        jax.block_until_ready(loss)  # type: ignore
         step_end = time.time()
-
-        # Calculate instant throughput
         throughput = batch_size / (step_end - step_start)
-
         yield {
             "step": step,
             "loss": float(loss),
@@ -157,7 +139,15 @@ def training_loop(
         }
 
 
+def run_headless(num_steps: int = 300, output_file: str = "metrics.json") -> None:
+    """Runs training and writes latest metrics to a JSON file for polling."""
+    for metrics in training_loop(num_steps=num_steps):
+        with open(output_file, "w") as f:
+            json.dump(metrics, f)
+        # Add a tiny sleep to not hammer the disk too hard
+        if metrics["step"] > 1:
+            time.sleep(0.01)
+
+
 if __name__ == "__main__":
-    # Simple CLI test
-    for metrics in training_loop(10):
-        print(metrics)
+    run_headless()

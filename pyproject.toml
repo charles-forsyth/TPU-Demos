@@ -1,6 +1,6 @@
 [project]
 name = "tpu-demos"
-version = "0.1.13"
+version = "0.1.14"
 description = "Research Computing TPU Demos for various science disciplines"
 readme = "README.md"
 authors = [

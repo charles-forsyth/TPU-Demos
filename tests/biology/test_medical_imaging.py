@@ -26,4 +26,4 @@ def test_training_loop_yields():
     second = next(iterator)
     assert second["status"] == "RUNNING"
     assert second["step"] == 1
-    assert "compile_time" in second
+    # Note: compile_time was removed for simplicity in polling refactor
