@@ -2,9 +2,46 @@ import json
 import subprocess
 
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.prompt import Prompt
+from rich.syntax import Syntax
+from rich.table import Table
 
 console = Console()
+
+CODE_SNIPPET = """
+@partial(jax.jit, static_argnames=["tx", "model"])
+def train_step(params, batch_stats, opt_state, batch, tx, model):
+    def loss_fn(params, batch_stats):
+        logits, new_model_state = model.apply(
+            {"params": params, "batch_stats": batch_stats},
+            batch["image"],
+            train=True,
+            mutable=["batch_stats"],
+        )
+        loss = optax.softmax_cross_entropy(logits, labels).mean()
+        return loss, new_model_state
+
+    grads = jax.grad(loss_fn)(params)
+    updates, opt_state = tx.update(grads, opt_state)
+    return params, new_model_state["batch_stats"], opt_state, loss
+"""
+
+WELCOME_TEXT = """
+# 🚀 Google Cloud TPU v5e Demo
+
+## Workload: Medical Imaging (ResNet-50)
+This demo showcases the power of **JAX**, **Flax**, and **XLA** running on a **TPU v5e**
+accelerator.
+
+### The Mission
+1.  **Provision** a v5litepod-1 TPU VM.
+2.  **Deploy** the ResNet-50 training code.
+3.  **Execute** a high-throughput training loop.
+4.  **Visualize** the results.
+5.  **Incinerate** the resources.
+"""
 
 
 class TPULauncher:
@@ -16,18 +53,36 @@ class TPULauncher:
         self.vm_name = vm_name
 
     def _run(self, cmd: list[str], desc: str, quiet: bool = True) -> None:
-        """Runs a command. If quiet=False, output streams to stdout."""
-        console.log(f"[blue]Action: {desc}[/]")
-        # For non-quiet commands (like running the job), we want to see output live.
-        # subprocess.run with capture_output=False streams to our stdout/stderr
-        try:
-            subprocess.run(cmd, check=True, capture_output=quiet, text=True)
+        """Runs a command with a spinner."""
+        if not quiet:
+            # For streaming output, we don't use the spinner context manager
+            console.log(f"[blue]Action: {desc}[/]")
+            subprocess.run(cmd, check=True, capture_output=False, text=True)
             console.log(f"[green]✓ {desc} complete.[/]")
-        except subprocess.CalledProcessError as e:
-            console.log(f"[bold red]✗ {desc} failed![/]")
-            if quiet and e.stderr:
-                console.print(f"[red]Error Details:[/red]\n{e.stderr}")
-            raise e
+            return
+
+        with console.status(f"[bold green]{desc}...") as _:
+            try:
+                subprocess.run(cmd, check=True, capture_output=True, text=True)
+                console.log(f"[green]✓ {desc} complete.[/]")
+            except subprocess.CalledProcessError as e:
+                console.log(f"[bold red]✗ {desc} failed![/]")
+                if e.stderr:
+                    console.print(f"[red]Error Details:[/red]\n{e.stderr}")
+                raise e
+
+    def show_welcome(self) -> None:
+        console.clear()
+        console.print(
+            Panel(Markdown(WELCOME_TEXT), title="TPU Demos", border_style="cyan")
+        )
+        code_panel = Panel(
+            Syntax(CODE_SNIPPET, "python", theme="monokai", line_numbers=True),
+            title="JAX Code Preview",
+            border_style="green",
+        )
+        console.print(code_panel)
+        Prompt.ask("\n[bold yellow]Press Enter to launch mission[/]")
 
     def provision_vm(self) -> None:
         # Check existence
@@ -44,13 +99,14 @@ class TPULauncher:
             "--format=json",
         ]
         try:
-            raw = subprocess.run(check, capture_output=True, text=True).stdout
-            tpus = json.loads(raw) if raw else []
-            if any(t.get("name", "").endswith(self.vm_name) for t in tpus):
-                console.log(f"[yellow]VM '{self.vm_name}' found. Reusing.[/]")
-                return
+            with console.status("[bold green]Checking existing resources...") as _:
+                raw = subprocess.run(check, capture_output=True, text=True).stdout
+                tpus = json.loads(raw) if raw else []
+                if any(t.get("name", "").endswith(self.vm_name) for t in tpus):
+                    console.log(f"[yellow]VM '{self.vm_name}' found. Reusing.[/]")
+                    return
         except Exception:
-            pass  # Ignore listing errors, try create
+            pass
 
         # Create
         create = [
@@ -73,7 +129,6 @@ class TPULauncher:
         self._run(create, "Provisioning TPU VM")
 
     def deploy_code(self) -> None:
-        # Cleanup remote dir first to ensure clean state
         self._run(
             [
                 "gcloud",
@@ -92,7 +147,6 @@ class TPULauncher:
             "Preparing remote directory",
         )
 
-        # Upload
         for f in ["src", "pyproject.toml"]:
             self._run(
                 [
@@ -112,7 +166,6 @@ class TPULauncher:
                 f"Uploading {f}",
             )
 
-        # Install Deps
         pkg_url = "https://storage.googleapis.com/jax-releases/libtpu_releases.html"
         install = [
             "gcloud",
@@ -132,8 +185,6 @@ class TPULauncher:
 
     def run_job(self) -> None:
         console.rule("[bold green]Starting Job Execution[/]")
-        # We run this WITH output streaming (quiet=False) so user sees logs.
-        # We use stdbuf to force unbuffered output if possible, or python -u
         cmd_str = (
             "export PYTHONPATH=$HOME/tpu-demos/src && "
             "cd ~/tpu-demos && "
@@ -152,13 +203,12 @@ class TPULauncher:
             self.project_id,
             "--command",
             cmd_str,
-            "--ssh-flag=-t",  # Force TTY for color/formatting preservation
+            "--ssh-flag=-t",
         ]
         self._run(cmd, "Running Job", quiet=False)
 
-    def download_results(self) -> None:
+    def display_results(self) -> None:
         console.log("[blue]Downloading results...[/]")
-        # We assume the job writes to ~/tpu-demos/results.json
         cmd = [
             "gcloud",
             "compute",
@@ -174,12 +224,20 @@ class TPULauncher:
         ]
         try:
             subprocess.run(cmd, check=True, capture_output=True)
-            console.log("[green]✓ Results saved to 'job_results.json'[/]")
 
-            # Print summary
             with open("job_results.json") as f:
                 data = json.load(f)
-                console.print(Panel(json.dumps(data, indent=2), title="Job Summary"))
+
+            table = Table(title="Mission Results", border_style="green")
+            table.add_column("Metric", style="cyan")
+            table.add_column("Value", style="magenta")
+
+            table.add_row("Final Loss", f"{data['final_loss']:.4f}")
+            table.add_row("Throughput", f"{data['avg_throughput']:.2f} img/s")
+            table.add_row("Total Time", f"{data['total_time']:.2f} s")
+            table.add_row("Status", "[bold green]SUCCESS[/]")
+
+            console.print(Panel(table, border_style="green"))
 
         except Exception:
             console.log(
@@ -187,6 +245,7 @@ class TPULauncher:
             )
 
     def cleanup(self) -> None:
+        Prompt.ask("\n[bold yellow]Press Enter to incinerate resources[/]")
         console.rule("[bold red]Cleanup[/]")
         cmd = [
             "gcloud",
@@ -207,13 +266,15 @@ class TPULauncher:
 def launch_mission(project_id: str) -> None:
     launcher = TPULauncher(project_id)
     try:
+        launcher.show_welcome()
         launcher.provision_vm()
         launcher.deploy_code()
         launcher.run_job()
-        launcher.download_results()
+        launcher.display_results()
     except KeyboardInterrupt:
         console.print("\n[yellow]Job cancelled by user.[/]")
     except Exception as e:
-        console.print(f"\n[bold red]Job Failed:[/] {e}")
+        console.print("\n[bold red]Job Failed:[/]")
+        console.print(e)
     finally:
         launcher.cleanup()
