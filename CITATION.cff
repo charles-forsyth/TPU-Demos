@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "TPU Demos: JAX/Flax demonstrations on Google Cloud TPU for science disciplines"
+type: software
+authors:
+  - family-names: "Forsyth III"
+    given-names: "Charles E."
+    orcid: "https://orcid.org/0000-0003-4872-0296"
+    affiliation: "University of California, Riverside"
+repository-code: "https://github.com/charles-forsyth/TPU-Demos"
+license: MIT
+keywords:
+  - "TPU"
+  - "JAX"
+  - "Google Cloud"
+  - "machine learning"
